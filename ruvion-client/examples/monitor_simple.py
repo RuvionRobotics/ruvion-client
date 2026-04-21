@@ -38,10 +38,16 @@ async def main() -> None:
                 f"fault={s.any_fault}  quickstop={s.quickstop_active}  "
                 f"controller={s.has_controller}  op_enabled={s.all_op_enabled}"
             )
-            if tel.arm is not None:
-                print(f"  pos    {tel.arm.actual_position}")
-                print(f"  vel    {tel.arm.actual_velocity}")
-                print(f"  torque {tel.arm.actual_torque}")
+            for label, arm in (
+                ("arm", tel.arm),
+                ("right", tel.right_arm),
+                ("left", tel.left_arm),
+            ):
+                if arm is None:
+                    continue
+                print(f"  [{label}] pos    {arm.actual_position}")
+                print(f"  [{label}] vel    {arm.actual_velocity}")
+                print(f"  [{label}] torque {arm.actual_torque}")
             print()
 
 
