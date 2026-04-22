@@ -4,5 +4,4 @@ __pycache__/
 dist/
 build/
 .venv/
-ruvion_client/proto/ruvion/
 examples/config.py
