@@ -4,14 +4,18 @@ Setup
 -----
 1. Edit examples/config.py so CERT_DIR points at ca.crt, client.crt, client.key.
 2. Run:  python examples/monitor.py
+3. Press Enter to engage quickstop, 's' to stop, Ctrl+C to quit
 """
 import asyncio
 import logging
 import sys
+import threading
+import tty
+import termios
 
 import numpy as np
 
-from ruvion_client import ConnectError, connect_controller, discover_once
+from ruvion_client import ConnectError, QuickstopState, connect_controller, discover_once
 from ruvion_client.telemetry import ArmTelemetry, DriveStatus, MotionStatus, Telemetry
 
 from config import CERT_DIR
@@ -22,6 +26,7 @@ ENTER_ALT   = "\033[?1049h"
 EXIT_ALT    = "\033[?1049l"
 HOME        = "\033[H"
 CLEAR_EOS   = "\033[J"
+CLEAR_EOL   = "\033[K"
 BOLD = "\033[1m"
 DIM = "\033[2m"
 RED = "\033[31m"
@@ -110,6 +115,9 @@ def _arm_block(label: str, arm: ArmTelemetry) -> list[str]:
     return lines
 
 
+_last_cmd_status: str = ""
+
+
 def _render(tel: Telemetry, serial: str, addr: str) -> str:
     lines = []
     lines.append(f"{BOLD}Ruvion Monitor{RESET}  {DIM}{serial}  {addr}  seq={tel.seq}{RESET}")
@@ -156,12 +164,14 @@ def _render(tel: Telemetry, serial: str, addr: str) -> str:
         lines.extend(_arm_block("Left arm", tel.left_arm))
 
     lines.append("")
-    lines.append(f"  {DIM}Ctrl+C to quit{RESET}")
+    lines.append(f"  {DIM}Enter=quickstop  Ctrl+C=quit{RESET}")
+    if _last_cmd_status:
+        lines.append(f"  {YELLOW}{_last_cmd_status}{RESET}")
     return lines
 
 
 def _draw(lines: list[str]) -> None:
-    sys.stdout.write(HOME + "\n".join(lines) + CLEAR_EOS)
+    sys.stdout.write(HOME + (CLEAR_EOL + "\n").join(lines) + CLEAR_EOL + CLEAR_EOS)
     sys.stdout.flush()
 
 
@@ -194,10 +204,45 @@ async def main() -> None:
     addr = f"{conn.remote_address}:{conn.controller.port}"
     sys.stdout.write(ENTER_ALT + HIDE_CURSOR + HOME + CLEAR_EOS)
     sys.stdout.flush()
+
+    input_queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def input_thread():
+        try:
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                asyncio.run_coroutine_threadsafe(input_queue.put(ch), loop)
+        except Exception:
+            pass
+        finally:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            except:
+                pass
+
+    input_task = threading.Thread(target=input_thread, daemon=True)
+    input_task.start()
+
     try:
         async with conn:
             async for tel in conn.telemetry():
                 _draw(_render(tel, c.serial, addr))
+                global _last_cmd_status
+                try:
+                    cmd = input_queue.get_nowait()
+                    _last_cmd_status = f"received key: {cmd!r}"
+                    if cmd in ("\n", "\r"):
+                        try:
+                            await conn.quickstop(QuickstopState.Engage)
+                            _last_cmd_status = "Quickstop engaged ✓"
+                        except Exception as e:
+                            _last_cmd_status = f"Quickstop failed: {e}"
+                except asyncio.QueueEmpty:
+                    pass
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
