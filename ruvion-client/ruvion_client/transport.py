@@ -599,7 +599,7 @@ async def connect_controller(
         alpn_protocols=[EXPECTED_ALPN],
         server_name=sni,
         idle_timeout=idle_timeout,
-        max_datagram_frame_size=65536,  # enable QUIC DATAGRAM for telemetry/motion
+        max_datagram_frame_size=1200,  # Conservative MTU for IPv6 over Ethernet
     )
     config.load_verify_locations(cafile=str(bundle.ca))
     config.load_cert_chain(certfile=str(bundle.client_cert), keyfile=str(bundle.client_key))
@@ -614,26 +614,60 @@ async def connect_controller(
     address_strs = [_format_address(a) for a in addresses]
     log.debug("connect order: %s", address_strs)
 
-    # Sequential attempts: kinder to the controller than 12 parallel handshakes,
-    # and IPv4/LAN addresses come first thanks to _sort_addresses.
-    per_attempt = max(1.0, connect_timeout / max(1, len(address_strs)))
+    # Parallel attempts: race all addresses with the full connect_timeout each.
+    # First successful handshake wins; losers are cancelled and their aioquic
+    # stacks torn down. This beats serial attempts when the first address is
+    # unreachable (e.g. IPv4 from hostname fallback that doesn't actually route).
+    tasks: dict[asyncio.Task, str] = {
+        asyncio.create_task(
+            _attempt_connect(addr, controller.port, config, connect_timeout)
+        ): addr
+        for addr in address_strs
+    }
     errors: list[tuple[str, BaseException]] = []
-    for addr in address_strs:
-        try:
-            addr_, protocol, stack = await _attempt_connect(
-                addr, controller.port, config, per_attempt
+    winner: Optional[tuple[str, _RuvionProtocol, AsyncExitStack]] = None
+    try:
+        while tasks and winner is None:
+            done, _ = await asyncio.wait(
+                tasks.keys(), return_when=asyncio.FIRST_COMPLETED
             )
-            log.info(
-                "Connected to %s via %s:%d (ALPN=%s)",
-                controller.serial, addr_, controller.port, EXPECTED_ALPN,
-            )
-            return Connection(protocol, controller, addr_, stack)
-        except BaseException as e:  # noqa: BLE001
-            errors.append((addr, e))
-            log.debug("connect %s failed: %s: %s", addr, type(e).__name__, e)
+            for t in done:
+                addr = tasks.pop(t)
+                try:
+                    winner = t.result()
+                    break
+                except BaseException as e:  # noqa: BLE001
+                    errors.append((addr, e))
+                    log.debug("connect %s failed: %s: %s", addr, type(e).__name__, e)
+    finally:
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            try:
+                late = await t
+            except BaseException:  # noqa: BLE001
+                pass
+            else:
+                # Late winner we don't need — close it so the controller sees
+                # a clean shutdown instead of an idle-timeout dangle.
+                _, _, late_stack = late
+                try:
+                    await late_stack.aclose()
+                except BaseException:  # noqa: BLE001
+                    pass
 
-    err_summary = "; ".join(f"{a}: {e.__class__.__name__}: {e}" for a, e in errors)
-    raise ConnectError(
-        f"All {len(address_strs)} connection attempts failed for "
-        f"{controller.serial}. Tried: {err_summary or 'no results'}"
+    if winner is None:
+        err_summary = "; ".join(
+            f"{a}: {e.__class__.__name__}: {e}" for a, e in errors
+        )
+        raise ConnectError(
+            f"All {len(address_strs)} connection attempts failed for "
+            f"{controller.serial}. Tried: {err_summary or 'no results'}"
+        )
+
+    addr_, protocol, stack = winner
+    log.info(
+        "Connected to %s via %s:%d (ALPN=%s)",
+        controller.serial, addr_, controller.port, EXPECTED_ALPN,
     )
+    return Connection(protocol, controller, addr_, stack)
