@@ -103,7 +103,10 @@ async def main() -> None:
             await conn.quickstop(QuickstopState.Disengage)
             print("  ✓ quickstop(Disengage) — waiting for Operational...")
             await wait_operational()
-            print("  ✓ drives Operational\n")
+            print("  ✓ drives Operational")
+
+            await conn.set_drive_mode(DriveMode.Impedance)
+            print("  ✓ set_drive_mode(Impedance)\n")
 
             await goto("target", TARGET_REV)
             await goto("zero", ZERO_REV)

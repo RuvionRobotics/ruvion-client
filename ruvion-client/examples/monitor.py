@@ -10,6 +10,7 @@ import asyncio
 import logging
 import sys
 import threading
+import time
 import tty
 import termios
 
@@ -116,6 +117,8 @@ def _arm_block(label: str, arm: ArmTelemetry) -> list[str]:
 
 
 _last_cmd_status: str = ""
+_last_cmd_time: float = 0.0
+_STATUS_TTL_S: float = 2.0
 
 
 def _render(tel: Telemetry, serial: str, addr: str) -> str:
@@ -165,7 +168,7 @@ def _render(tel: Telemetry, serial: str, addr: str) -> str:
 
     lines.append("")
     lines.append(f"  {DIM}Enter=quickstop  Ctrl+C=quit{RESET}")
-    if _last_cmd_status:
+    if _last_cmd_status and (time.monotonic() - _last_cmd_time) < _STATUS_TTL_S:
         lines.append(f"  {YELLOW}{_last_cmd_status}{RESET}")
     return lines
 
@@ -231,16 +234,18 @@ async def main() -> None:
         async with conn:
             async for tel in conn.telemetry():
                 _draw(_render(tel, c.serial, addr))
-                global _last_cmd_status
+                global _last_cmd_status, _last_cmd_time
                 try:
                     cmd = input_queue.get_nowait()
                     _last_cmd_status = f"received key: {cmd!r}"
+                    _last_cmd_time = time.monotonic()
                     if cmd in ("\n", "\r"):
                         try:
                             await conn.quickstop(QuickstopState.Engage)
                             _last_cmd_status = "Quickstop engaged ✓"
                         except Exception as e:
                             _last_cmd_status = f"Quickstop failed: {e}"
+                        _last_cmd_time = time.monotonic()
                 except asyncio.QueueEmpty:
                     pass
     except (KeyboardInterrupt, asyncio.CancelledError):

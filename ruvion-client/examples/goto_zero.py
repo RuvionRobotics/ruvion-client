@@ -86,6 +86,9 @@ async def main() -> None:
             await wait_operational()
             print("  ✓ drives Operational")
 
+            await conn.set_drive_mode(DriveMode.Impedance)
+            print("  ✓ set_drive_mode(Impedance)")
+
             await asyncio.sleep(0.5)
 
             print("  Sending all joints to position 0...")
