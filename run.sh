@@ -20,24 +20,6 @@ echo "Updating dependencies..."
 "$PIP" install --quiet --upgrade pip
 "$PIP" install --quiet -e "$PROJECT_DIR"
 
-# ── proto generation ──────────────────────────────────────────────────────────
-SCHEMAS_DIR="$REPO_ROOT/submodules/motion-control-protocol/schemas"
-
-if [ ! -d "$SCHEMAS_DIR" ]; then
-    echo "Error: submodule not initialised. Run:"
-    echo "  git submodule update --init --recursive"
-    exit 1
-fi
-
-if ! command -v flatc >/dev/null 2>&1; then
-    echo "Error: flatc not found. Install with:"
-    echo "  brew install flatbuffers"
-    exit 1
-fi
-
-echo "Generating FlatBuffers bindings..."
-bash "$PROJECT_DIR/scripts/generate_proto.sh"
-
 # ── config ───────────────────────────────────────────────────────────────────
 CONFIG_FILE="$EXAMPLES_DIR/config.py"
 if [ ! -f "$CONFIG_FILE" ]; then
