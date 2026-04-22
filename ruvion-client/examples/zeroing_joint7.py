@@ -10,8 +10,6 @@ import logging
 
 from ruvion_client import (
     ConnectError,
-    DriveMode,
-    JointPose,
     QuickstopState,
     connect_controller,
     discover_once,
@@ -69,41 +67,17 @@ async def main() -> None:
     async with conn:
         print(f"  ✓ Connected via {conn.remote_address}:{conn.controller.port}")
 
-        try:
-            await conn.clear_fault()
-            print("  ✓ clear_fault")
-        except Exception as e:
-            print(f"  ! clear_fault: {e} (continuing)")
-
         async with conn.claim():
             print("  ✓ claim_control")
-            await conn.set_drive_mode(DriveMode.Csp)
-            print("  ✓ set_drive_mode(Csp)")
+
+            await conn.quickstop(QuickstopState.Engage)
+            print("  ✓ quickstop(Engage)")
+
             try:
                 await conn.clear_fault()
-            except Exception:
-                pass
-            await conn.quickstop(QuickstopState.Disengage)
-            print("  ✓ quickstop(Disengage) — waiting for Operational...")
-            await wait_operational()
-            print("  ✓ drives Operational")
-
-            print("  Sending joint 7 to position 0...")
-            pose = JointPose(position=[0.0] * 7)
-            if is_humanoid:
-                conn.send_humanoid(right=pose, left=pose)
-            else:
-                conn.send_single(pose)
-
-            await asyncio.sleep(0.5)
-            print("  Waiting for Idle...")
-            await wait_idle()
-            print("  ✓ Idle")
-
-            await asyncio.sleep(0.5)
-            await conn.set_drive_mode(DriveMode.Csp)
-            print("  ✓ set_drive_mode(Csp)")
-            await asyncio.sleep(1.0)
+                print("  ✓ clear_fault")
+            except Exception as e:
+                print(f"  ! clear_fault: {e} (continuing)")
 
             print("  Starting zeroing for joint 7...")
             if is_humanoid:

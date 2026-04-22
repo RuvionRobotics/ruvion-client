@@ -599,7 +599,7 @@ async def connect_controller(
         alpn_protocols=[EXPECTED_ALPN],
         server_name=sni,
         idle_timeout=idle_timeout,
-        max_datagram_frame_size=1200,  # Conservative MTU for IPv6 over Ethernet
+        max_datagram_frame_size=2000,  # Conservative MTU for IPv6 over Ethernet
     )
     config.load_verify_locations(cafile=str(bundle.ca))
     config.load_cert_chain(certfile=str(bundle.client_cert), keyfile=str(bundle.client_key))
